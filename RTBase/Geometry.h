@@ -146,10 +146,21 @@ public:
 		interpolatedU = vertices[0].u * alpha + vertices[1].u * beta + vertices[2].u * gamma;
 		interpolatedV = vertices[0].v * alpha + vertices[1].v * beta + vertices[2].v * gamma;
 	}
-	// Add code here
+	//7-13 均匀地在三角形面积上随机取一个点，用于面光源采样（需要知道光从哪个位置发出来）。sqrt(r1)和(1 - sqrt(r1))：直接用r1和r2作为重心坐标会在三角形一角产生聚集，先对r1开方可以保证均匀分布在三角形上 u、v、w是重心坐标，三者之和为1，用它们对三个顶点加权就得到三角形内的随机点pdf = 1 / area：均匀采样，概率密度是面积的倒数
 	Vec3 sample(Sampler* sampler, float& pdf)
 	{
-		return Vec3(0, 0, 0);
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+
+		float sqrtR1 = sqrtf(r1);
+		float u = 1.0f - sqrtR1;
+		float v = r2 * sqrtR1;
+		float w = 1.0f - u - v;
+
+		Vec3 p = vertices[0].p * u + vertices[1].p * v + vertices[2].p * w;
+		pdf = 1.0f / area;
+
+		return p;
 	}
 	Vec3 gNormal()
 	{

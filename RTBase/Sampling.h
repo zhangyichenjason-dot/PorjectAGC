@@ -63,10 +63,10 @@ public:
 
 		return Vec3(x, y, z);
 	}
+	// 7-1（Materials）余弦采样的核心思想是：光线越接近法线方向（cosθ越大），采样概率越高。因为物理上这个方向贡献的能量也更多（朗伯余弦定律），让采样概率和贡献匹配可以减少噪声。wi.z 在局部坐标（z朝上）中就等于 cosθ，除以 π 是归一化常数，保证整个半球积分等于1。
 	static float cosineHemispherePDF(const Vec3 wi)
 	{
-		// Add code here
-		return 1.0f;
+		return (wi.z > 0.0f) ? (wi.z / (float)M_PI) : 0.0f;
 	}
 	static Vec3 uniformSampleSphere(float r1, float r2)
 	{
