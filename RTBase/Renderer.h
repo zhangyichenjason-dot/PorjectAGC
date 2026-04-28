@@ -206,6 +206,11 @@ public:
 			newThroughput = newThroughput / continueProb;
 		}
 
+		// Clamp path throughput to suppress energy explosion / fireflies
+		newThroughput.r = std::min(newThroughput.r, 10.0f);
+		newThroughput.g = std::min(newThroughput.g, 10.0f);
+		newThroughput.b = std::min(newThroughput.b, 10.0f);
+
 		Ray nextRay;
 		nextRay.init(shadingData.x + (wi * EPSILON), wi);
 
@@ -289,6 +294,12 @@ public:
 					Ray ray = scene->camera.generateRay(px, py, &samplers[0]);
 					Colour throughput(1.0f, 1.0f, 1.0f);
 					Colour sampleCol = pathTrace(ray, throughput, 0, &samplers[0]);
+
+					// Clamp per-sample radiance before accumulation (firefly suppression)
+					sampleCol.r = std::min(sampleCol.r, 100.0f);
+					sampleCol.g = std::min(sampleCol.g, 100.0f);
+					sampleCol.b = std::min(sampleCol.b, 100.0f);
+
 					pixelAccum = pixelAccum + sampleCol;
 				}
 
@@ -373,6 +384,12 @@ public:
 						Ray ray = scene->camera.generateRay(px, py, &samplers[0]);
 						Colour throughput(1.0f, 1.0f, 1.0f);
 						Colour sampleCol = pathTrace(ray, throughput, 0, &samplers[0]);
+
+						// Clamp per-sample radiance before accumulation (firefly suppression)
+						sampleCol.r = std::min(sampleCol.r, 100.0f);
+						sampleCol.g = std::min(sampleCol.g, 100.0f);
+						sampleCol.b = std::min(sampleCol.b, 100.0f);
+
 						pixelAccum = pixelAccum + sampleCol;
 					}
 
