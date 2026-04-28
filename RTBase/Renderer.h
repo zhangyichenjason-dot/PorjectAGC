@@ -258,12 +258,12 @@ public:
 		const unsigned int width = film->width;
 		const unsigned int height = film->height;
 
-		// 8-5在现有的路径追踪渲染循环中，额外执行若干次 lightTrace 调用，让两种方法共同贡献到同一张 film 上。
-		// Light Tracing pass (extra contribution to the same film)
+		// 8-5 在现有路径追踪循环外，额外执行 light tracing，并按光路数归一化
 		const int numLightPaths = (int)(width * height);
+		const float lightPathScale = (numLightPaths > 0) ? (1.0f / (float)numLightPaths) : 0.0f;
 		for (int i = 0; i < numLightPaths; ++i)
 		{
-			lightTrace(&samplers[0]);
+			lightTrace(&samplers[0], lightPathScale);
 		}
 
 		const int blockSize = 16;
@@ -498,7 +498,7 @@ public:
 		film->splat(x, y, contribution);
 	}
 	//8-3 从光源出发，采样一个起始位置和方向，将起始点连接到相机，然后启动光路追踪。
-	void lightTrace(Sampler* sampler)
+	void lightTrace(Sampler* sampler, float scalePerPath)
 	{
 		// 1) Sample a light (same strategy as computeDirect)
 		float lightPMF = 0.0f;
@@ -529,21 +529,21 @@ public:
 		Colour Le = light->evaluate(-wi);
 		Colour col = Le / (pdfPosition * lightPMF);
 
-		// 5) Connect starting point to camera
-		connectToCamera(p, lightNormal, col);
+		// 5) Connect starting point to camera (scaled per path)
+		connectToCamera(p, lightNormal, col * scalePerPath);
 
 		// 6) Build initial ray from light
 		Ray ray;
 		ray.init(p + (wi * EPSILON), wi);
 
-		// 7) Initial throughput includes direction PDF
+		// 7) Initial throughput
 		Colour pathThroughput = col / pdfDirection;
 
 		// 8) Continue light path tracing
-		lightTracePath(ray, pathThroughput, Le, sampler);
+		lightTracePath(ray, pathThroughput, Le, sampler, scalePerPath);
 	}
 	// 8-4 递归追踪从光源出发的光路。与 pathTrace() 的主要区别是：不计算直接光照，而是在每个交点都尝试连接到相机。
-	void lightTracePath(Ray& ray, Colour pathThroughput, Colour Le, Sampler* sampler, int depth = 0)
+	void lightTracePath(Ray& ray, Colour pathThroughput, Colour Le, Sampler* sampler, float scalePerPath, int depth = 0)
 	{
 		// Depth guard
 		const int maxDepth = 64;
@@ -570,7 +570,7 @@ public:
 			wi = wi.normalize();
 			Colour bsdfVal = shadingData.bsdf->evaluate(shadingData, wi);
 			Colour col = pathThroughput * bsdfVal * Le;
-			connectToCamera(shadingData.x, shadingData.sNormal, col);
+			connectToCamera(shadingData.x, shadingData.sNormal, col * scalePerPath);
 		}
 
 		// 4) Russian roulette
@@ -601,6 +601,6 @@ public:
 		// 7) Spawn next ray and recurse
 		Ray nextRay;
 		nextRay.init(shadingData.x + (nextDir * EPSILON), nextDir);
-		lightTracePath(nextRay, pathThroughput, Le, sampler, depth + 1);
+		lightTracePath(nextRay, pathThroughput, Le, sampler, scalePerPath, depth + 1);
 	}
 };
