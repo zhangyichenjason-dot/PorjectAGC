@@ -216,7 +216,7 @@ public:
 		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec3 wiLocal = Vec3(-woLocal.x, -woLocal.y, woLocal.z);
 		pdf = 1.0f;
-		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / wiLocal.z;
+		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) ;
 		return shadingData.frame.toWorld(wiLocal);
 	}
 	// 7-3 镜面只在一个精确方向有响应，evaluate用于任意方向，永远为0
@@ -431,7 +431,7 @@ public:
 		if (sampler->next() < F)
 		{
 			wiLocal = Vec3(-woLocal.x, -woLocal.y, woLocal.z);
-			reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / fabsf(wiLocal.z);
+			reflectedColour = albedo->sample(shadingData.tu, shadingData.tv);
 			pdf = F;
 		}
 		else
@@ -443,14 +443,15 @@ public:
 			if (sinThetaTSq >= 1.0f)
 			{
 				wiLocal = Vec3(-woLocal.x, -woLocal.y, woLocal.z);
-				reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) / fabsf(wiLocal.z);
+				reflectedColour = albedo->sample(shadingData.tu, shadingData.tv);
 				pdf = F;
 			}
 			else
 			{
 				float cosThetaT = sqrtf(1.0f - sinThetaTSq);
-				wiLocal = Vec3(-eta * woLocal.x, -eta * woLocal.y, -cosThetaT);
-				reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) * (eta * eta) / fabsf(wiLocal.z);
+				float sign = (woLocal.z > 0.0f) ? -1.0f : 1.0f;
+				wiLocal = Vec3(-eta * woLocal.x, -eta * woLocal.y, sign * cosThetaT);
+				reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) * (eta * eta);
 				pdf = 1.0f - F;
 			}
 		}
@@ -660,6 +661,13 @@ public:
 			lobeFrame.fromVector(r);
 			wiLocal = lobeFrame.toWorld(wiLocalLobe);
 
+			if (wiLocal.z <= 0.0f)
+			{
+				reflectedColour = Colour(0.0f, 0.0f, 0.0f);
+				pdf = 0.0f;
+				return Vec3(0.0f, 0.0f, 0.0f);
+			}
+
 			pdf = powf(cosTheta, n) * (n + 1.0f) / (2.0f * (float)M_PI) * F;
 		}
 		else
@@ -832,14 +840,6 @@ public:
 
 		float F = ShadingHelper::fresnelDielectric(fabsf(woLocal.z), intIOR, extIOR);
 
-		Colour coatSpec(0.0f, 0.0f, 0.0f);
-		Vec3 r = Vec3(-woLocal.x, -woLocal.y, woLocal.z);
-		if ((wiLocal - r).lengthSq() < 1e-6f)
-		{
-			float cosTheta = std::max(1e-4f, fabsf(wiLocal.z));
-			coatSpec = Colour(F, F, F) / cosTheta;
-		}
-
 		auto refractLocal = [](const Vec3& v, float etaI, float etaT, Vec3& vt)->bool
 			{
 				float eta = etaI / etaT;
@@ -860,7 +860,7 @@ public:
 		Vec3 wiInside;
 		if (!refractLocal(woLocal, extIOR, intIOR, woInside) || !refractLocal(wiLocal, extIOR, intIOR, wiInside))
 		{
-			return coatSpec;
+			return Colour(0.0f, 0.0f, 0.0f);
 		}
 
 		ShadingData insideData = shadingData;
@@ -887,7 +887,7 @@ public:
 		float oneMinusF = 1.0f - F;
 		Colour baseTerm = (baseEval * att) * (oneMinusF * oneMinusF);
 
-		return coatSpec + baseTerm;
+		return baseTerm;
 	}
 	float PDF(const ShadingData& shadingData, const Vec3& wi)
 	{

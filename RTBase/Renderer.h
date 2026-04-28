@@ -134,8 +134,9 @@ public:
 		float weight = cosSurface / (lightPDF * lightPMF);
 		return f * Le * weight;
 	}
-	// 5-3 这是整个光线追踪器的灵魂！你要写一段代码，让光线打中物体后，不仅算一下头顶上的灯光（上一步的直接光照），还要随机找个方向继续弹射出去，去收集“别的物体反射过来的光”。光线这样一路弹射形成的轨迹，就叫“路径（Path）”
-	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler)
+	// 5-3 让光线打中物体后，不仅算一下头顶上的灯光（上一步的直接光照），还要随机找个方向继续弹射出去，去收集“别的物体反射过来的光”。光线这样一路弹射形成的轨迹，就叫“路径（Path）”
+	// 7-适配把 pathTrace 的“间接弹射”从均匀半球采样改为 BSDF::sample(...)，并对纯镜面分支做了特殊处理。
+	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler, bool fromSpecular = true)
 	{
 		// Safety guard for recursion
 		if (depth > 64)
@@ -154,34 +155,44 @@ public:
 
 		Colour L(0.0f, 0.0f, 0.0f);
 
-		// Hit emissive surface
+		// Hit emissive surface (avoid double counting with direct-light sampling)
 		if (shadingData.bsdf->isLight())
 		{
-			L = L + (pathThroughput * shadingData.bsdf->emit(shadingData, shadingData.wo));
+			if (fromSpecular)
+			{
+				L = L + (pathThroughput * shadingData.bsdf->emit(shadingData, shadingData.wo));
+			}
 		}
 
 		// Add direct lighting at current bounce
 		L = L + (pathThroughput * computeDirect(shadingData, sampler));
 
-		// Indirect bounce: uniform hemisphere sampling in local frame
-		Vec3 wiLocal = SamplingDistributions::uniformSampleHemisphere(sampler->next(), sampler->next());
-		float pdf = SamplingDistributions::uniformHemispherePDF(wiLocal);
+		// Indirect bounce: BSDF-driven sampling
+		Colour f;
+		float pdf = 0.0f;
+		Vec3 wi = shadingData.bsdf->sample(shadingData, sampler, f, pdf);
+
+		// For invalid sample / impossible event
 		if (pdf <= 0.0f)
 		{
 			return L;
 		}
 
-		Vec3 wi = shadingData.frame.toWorld(wiLocal);
-		float cosTheta = std::max(0.0f, Dot(shadingData.sNormal, wi));
-		if (cosTheta <= 0.0f)
+		Colour newThroughput;
+		if (shadingData.bsdf->isPureSpecular())
 		{
-			return L;
+			// Mirror/Glass sample() already handles its own cosine-related term
+			newThroughput = pathThroughput * f;
 		}
-
-		Colour f = shadingData.bsdf->evaluate(shadingData, wi);
-
-		// Throughput update with Monte Carlo estimator factor: f * cos / pdf
-		Colour newThroughput = pathThroughput * f * (cosTheta / pdf);
+		else
+		{
+			float cosTheta = std::max(0.0f, Dot(shadingData.sNormal, wi));
+			if (cosTheta <= 0.0f)
+			{
+				return L;
+			}
+			newThroughput = pathThroughput * f * (cosTheta / pdf);
+		}
 
 		// Russian roulette termination
 		const int rrStartDepth = 3;
@@ -198,7 +209,8 @@ public:
 		Ray nextRay;
 		nextRay.init(shadingData.x + (wi * EPSILON), wi);
 
-		L = L + pathTrace(nextRay, newThroughput, depth + 1, sampler);
+		bool nextFromSpecular = shadingData.bsdf->isPureSpecular();
+		L = L + pathTrace(nextRay, newThroughput, depth + 1, sampler, nextFromSpecular);
 		return L;
 	}
 	Colour direct(Ray& r, Sampler* sampler)
