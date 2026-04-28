@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core.h"
 #include "Geometry.h"
@@ -65,14 +65,19 @@ public:
 	{
 		return triangle->sample(sampler, pdf);
 	}
+	// 8-1（RenderingAlgorithms）要实现光追。从面光源法线方向的半球上进行余弦加权采样（cosine sampling）。采样方向应在面光源几何法线所定义的局部坐标系中生成，然后转换回世界坐标。
 	Vec3 sampleDirectionFromLight(Sampler* sampler, float& pdf)
 	{
-		// Add code to sample a direction from the light
-		Vec3 wi = Vec3(0, 0, 1);
-		pdf = 1.0f;
 		Frame frame;
 		frame.fromVector(triangle->gNormal());
-		return frame.toWorld(wi);
+
+		float r1 = sampler->next();
+		float r2 = sampler->next();
+
+		Vec3 wiLocal = SamplingDistributions::cosineSampleHemisphere(r1, r2);
+		pdf = SamplingDistributions::cosineHemispherePDF(wiLocal);
+
+		return frame.toWorld(wiLocal);
 	}
 };
 

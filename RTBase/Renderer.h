@@ -25,7 +25,7 @@ public:
 		scene = _scene;
 		canvas = _canvas;
 		film = new Film();
-		film->init((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, new MitchellNetravaliFilter());//选择滤波器
+		film->init((unsigned int)scene->camera.width, (unsigned int)scene->camera.height, new GaussianFilter());//选择滤波器
 
 		SYSTEM_INFO sysInfo;
 		GetSystemInfo(&sysInfo);
@@ -247,6 +247,7 @@ public:
 		}
 		return Colour(0.0f, 0.0f, 0.0f);
 	}
+	//8-end
 	// 6-1 前我们用蒙特卡洛“扔骰子”法时，屏幕上每个像素都扔了同样次数的骰子（比如每个像素发 100 条光线）。但有些地方（比如平滑的白墙）很容易就算准了，有些地方（比如复杂的玻璃阴影）算很久还是有很多噪点（马赛克）。自适应采样就是教电脑“把好钢用在刀刃上”：聪明的分配计算资源，哪里噪点多，就往哪里多发光线
 	// 2-4 把你上面写好的“虚拟胶片”、“色调映射”等零件，真正组装到你的主程序里，让它们跑起来
 	void render()
@@ -256,6 +257,14 @@ public:
 
 		const unsigned int width = film->width;
 		const unsigned int height = film->height;
+
+		// 8-5在现有的路径追踪渲染循环中，额外执行若干次 lightTrace 调用，让两种方法共同贡献到同一张 film 上。
+		// Light Tracing pass (extra contribution to the same film)
+		const int numLightPaths = (int)(width * height);
+		for (int i = 0; i < numLightPaths; ++i)
+		{
+			lightTrace(&samplers[0]);
+		}
 
 		const int blockSize = 16;
 		const int pilotSPP = 2;                  // low SPP sketch pass (1~4 recommended)
@@ -430,5 +439,168 @@ public:
 	void savePNG(std::string filename)
 	{
 		stbi_write_png(filename.c_str(), canvas->getWidth(), canvas->getHeight(), 3, canvas->getBackBuffer(), canvas->getWidth() * 3);
+	}
+	//8-2 给定场景中一个点 p、该点的法线 n、以及到达该点的颜色 col，判断该点是否能被相机看到，若能则将其贡献累积到 film 上。
+	void connectToCamera(const Vec3& p, const Vec3& n, const Colour& col)
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+
+		// 1) Project to camera film
+		if (!scene->camera.projectOntoCamera(p, x, y))
+		{
+			return;
+		}
+
+		// 2) Visibility test
+		if (!scene->visible(p, scene->camera.origin))
+		{
+			return;
+		}
+
+		// 3) Direction from point to camera
+		Vec3 toCamera = scene->camera.origin - p;
+		float distSq = toCamera.lengthSq();
+		if (distSq <= (EPSILON * EPSILON))
+		{
+			return;
+		}
+		float dist = sqrtf(distSq);
+		Vec3 wi = toCamera / dist;
+
+		// 4) Geometry term + sensor importance
+		float cosAtCamera = Dot(scene->camera.viewDirection, -wi);
+		if (cosAtCamera <= 0.0f)
+		{
+			return;
+		}
+
+		float cosAtSurface = Dot(n, wi);
+		if (cosAtSurface <= 0.0f)
+		{
+			return;
+		}
+
+		if (scene->camera.Afilm <= 0.0f)
+		{
+			return;
+		}
+
+		float cosAtCamera2 = cosAtCamera * cosAtCamera;
+		float cosAtCamera4 = cosAtCamera2 * cosAtCamera2;
+
+		float G = (cosAtCamera * cosAtSurface) / distSq;
+		float We = 1.0f / (scene->camera.Afilm * cosAtCamera4);
+		float weight = We * G;
+
+		// 5) Accumulate to film
+		Colour contribution = col * weight;
+		film->splat(x, y, contribution);
+	}
+	//8-3 从光源出发，采样一个起始位置和方向，将起始点连接到相机，然后启动光路追踪。
+	void lightTrace(Sampler* sampler)
+	{
+		// 1) Sample a light (same strategy as computeDirect)
+		float lightPMF = 0.0f;
+		Light* light = scene->sampleLight(sampler, lightPMF);
+		if (light == NULL || lightPMF <= 0.0f)
+		{
+			return;
+		}
+
+		// 2) Sample position and direction from the light
+		float pdfPosition = 0.0f;
+		float pdfDirection = 0.0f;
+		Vec3 p = light->samplePositionFromLight(sampler, pdfPosition);
+		Vec3 wi = light->sampleDirectionFromLight(sampler, pdfDirection);
+
+		if (pdfPosition <= 0.0f || pdfDirection <= 0.0f)
+		{
+			return;
+		}
+
+		// 3) Compute light-side normal
+		ShadingData lightShadingData = {};
+		lightShadingData.x = p;
+		lightShadingData.wo = -wi;
+		Vec3 lightNormal = light->normal(lightShadingData, wi);
+
+		// 4) Initial radiance/colour weight
+		Colour Le = light->evaluate(-wi);
+		Colour col = Le / (pdfPosition * lightPMF);
+
+		// 5) Connect starting point to camera
+		connectToCamera(p, lightNormal, col);
+
+		// 6) Build initial ray from light
+		Ray ray;
+		ray.init(p + (wi * EPSILON), wi);
+
+		// 7) Initial throughput includes direction PDF
+		Colour pathThroughput = col / pdfDirection;
+
+		// 8) Continue light path tracing
+		lightTracePath(ray, pathThroughput, Le, sampler);
+	}
+	// 8-4 递归追踪从光源出发的光路。与 pathTrace() 的主要区别是：不计算直接光照，而是在每个交点都尝试连接到相机。
+	void lightTracePath(Ray& ray, Colour pathThroughput, Colour Le, Sampler* sampler, int depth = 0)
+	{
+		// Depth guard
+		const int maxDepth = 64;
+		if (depth > maxDepth)
+		{
+			return;
+		}
+
+		// 1) Intersect scene
+		IntersectionData intersection = scene->traverse(ray);
+		ShadingData shadingData = scene->calculateShadingData(intersection, ray);
+
+		// 2) Miss => terminate
+		if (shadingData.t >= FLT_MAX)
+		{
+			return;
+		}
+
+		// 3) Connect current hit point to camera
+		Vec3 wi = scene->camera.origin - shadingData.x;
+		float wiLenSq = wi.lengthSq();
+		if (wiLenSq > (EPSILON * EPSILON))
+		{
+			wi = wi.normalize();
+			Colour bsdfVal = shadingData.bsdf->evaluate(shadingData, wi);
+			Colour col = pathThroughput * bsdfVal * Le;
+			connectToCamera(shadingData.x, shadingData.sNormal, col);
+		}
+
+		// 4) Russian roulette
+		float continueProb = std::min(0.95f, pathThroughput.Lum());
+		if (continueProb <= 0.0f)
+		{
+			return;
+		}
+		if (sampler->next() > continueProb)
+		{
+			return;
+		}
+		pathThroughput = pathThroughput / continueProb;
+
+		// 5) Sample next direction from BSDF
+		Colour f;
+		float pdf = 0.0f;
+		Vec3 nextDir = shadingData.bsdf->sample(shadingData, sampler, f, pdf);
+		if (pdf <= 0.0f)
+		{
+			return;
+		}
+
+		// 6) Update throughput
+		float cosTheta = fabsf(Dot(shadingData.sNormal, nextDir));
+		pathThroughput = pathThroughput * f * (cosTheta / pdf);
+
+		// 7) Spawn next ray and recurse
+		Ray nextRay;
+		nextRay.init(shadingData.x + (nextDir * EPSILON), nextDir);
+		lightTracePath(nextRay, pathThroughput, Le, sampler, depth + 1);
 	}
 };
