@@ -569,7 +569,7 @@ public:
 		{
 			wi = wi.normalize();
 			Colour bsdfVal = shadingData.bsdf->evaluate(shadingData, wi);
-			Colour col = pathThroughput * bsdfVal * Le;
+			Colour col = pathThroughput * bsdfVal;
 			connectToCamera(shadingData.x, shadingData.sNormal, col * scalePerPath);
 		}
 
