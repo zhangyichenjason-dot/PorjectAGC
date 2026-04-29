@@ -10,6 +10,8 @@
 #include "GamesEngineeringBase.h"
 #include <thread>
 #include <functional>
+#include <vector>
+#include <OpenImageDenoise/oidn.hpp>
 
 class RayTracer
 {
@@ -20,6 +22,15 @@ public:
 	MTRandom *samplers;
 	std::thread **threads;
 	int numProcs;
+	// 9-1 准备
+	// AOV buffers: width * height * 3 (RGB float)
+	std::vector<float> albedoBuffer;
+	std::vector<float> normalBuffer;
+
+	//9-2 准备
+	// OIDN input: linear HDR color buffer (pre-tonemap)
+	std::vector<float> colorBuffer;
+
 	void init(Scene* _scene, GamesEngineeringBase::Window* _canvas)
 	{
 		scene = _scene;
@@ -247,6 +258,7 @@ public:
 		}
 		return Colour(0.0f, 0.0f, 0.0f);
 	}
+	//9-1（SpeedingItUp）渲染时额外收集 AOV 缓冲（法线 + 反照率）
 	//8-end
 	// 6-1 前我们用蒙特卡洛“扔骰子”法时，屏幕上每个像素都扔了同样次数的骰子（比如每个像素发 100 条光线）。但有些地方（比如平滑的白墙）很容易就算准了，有些地方（比如复杂的玻璃阴影）算很久还是有很多噪点（马赛克）。自适应采样就是教电脑“把好钢用在刀刃上”：聪明的分配计算资源，哪里噪点多，就往哪里多发光线
 	// 2-4 把你上面写好的“虚拟胶片”、“色调映射”等零件，真正组装到你的主程序里，让它们跑起来
@@ -257,6 +269,17 @@ public:
 
 		const unsigned int width = film->width;
 		const unsigned int height = film->height;
+		const unsigned int pixelCount = width * height;
+
+		//9-1
+		// AOV buffer resize/reset (float RGB)
+		albedoBuffer.assign(pixelCount * 3, 0.0f);
+		normalBuffer.assign(pixelCount * 3, 0.0f);
+
+		//9-2
+		// OIDN input: linear HDR color (pre-tonemap)
+		colorBuffer.assign(pixelCount * 3, 0.0f);
+		std::vector<float> outputBuffer(pixelCount * 3, 0.0f);
 
 		// 8-5 在现有路径追踪循环外，额外执行 light tracing，并按光路数归一化
 		const int numLightPaths = (int)(width * height);
@@ -267,8 +290,8 @@ public:
 		}
 
 		const int blockSize = 16;
-		const int pilotSPP = 2;                  // low SPP sketch pass (1~4 recommended)
-		const int maxSPPPerPixelThisFrame = 6;   // adaptive upper bound in this frame
+		const int pilotSPP = 2;
+		const int maxSPPPerPixelThisFrame = 6;
 
 		const int blocksX = (int)((width + blockSize - 1) / blockSize);
 		const int blocksY = (int)((height + blockSize - 1) / blockSize);
@@ -282,13 +305,13 @@ public:
 		std::vector<int> blockSPP(blockCount, pilotSPP);
 
 		auto blockIndexOf = [blocksX, blockSize](int x, int y) -> int
-		{
-			const int bx = x / blockSize;
-			const int by = y / blockSize;
-			return by * blocksX + bx;
-		};
+			{
+				const int bx = x / blockSize;
+				const int by = y / blockSize;
+				return by * blocksX + bx;
+			};
 
-		// 1) Pilot pass: quick sketch + collect block statistics
+		// 1) Pilot pass
 		for (unsigned int y = 0; y < height; y++)
 		{
 			for (unsigned int x = 0; x < width; x++)
@@ -304,7 +327,6 @@ public:
 					Colour throughput(1.0f, 1.0f, 1.0f);
 					Colour sampleCol = pathTrace(ray, throughput, 0, &samplers[0]);
 
-					// Clamp per-sample radiance before accumulation (firefly suppression)
 					sampleCol.r = std::min(sampleCol.r, 100.0f);
 					sampleCol.g = std::min(sampleCol.g, 100.0f);
 					sampleCol.b = std::min(sampleCol.b, 100.0f);
@@ -359,7 +381,7 @@ public:
 				continue;
 			}
 
-			float t = blockVariance[bi] / maxVar; // [0,1]
+			float t = blockVariance[bi] / maxVar;
 			int spp = pilotSPP + (int)floorf(t * (float)(maxSPPPerPixelThisFrame - pilotSPP) + 0.5f);
 			if (spp < pilotSPP)
 			{
@@ -389,12 +411,11 @@ public:
 					{
 						float px = (float)x + samplers[0].next();
 						float py = (float)y + samplers[0].next();
-						// 6-2
+
 						Ray ray = scene->camera.generateRay(px, py, &samplers[0]);
 						Colour throughput(1.0f, 1.0f, 1.0f);
 						Colour sampleCol = pathTrace(ray, throughput, 0, &samplers[0]);
 
-						// Clamp per-sample radiance before accumulation (firefly suppression)
 						sampleCol.r = std::min(sampleCol.r, 100.0f);
 						sampleCol.g = std::min(sampleCol.g, 100.0f);
 						sampleCol.b = std::min(sampleCol.b, 100.0f);
@@ -407,23 +428,75 @@ public:
 			}
 		}
 
-		// Commit one averaged sample per pixel to film + display
+		// 5) Commit to film + fill AOV/OIDN input buffers
 		for (unsigned int y = 0; y < height; y++)
 		{
 			for (unsigned int x = 0; x < width; x++)
 			{
 				const float px = (float)x + 0.5f;
 				const float py = (float)y + 0.5f;
-
 				const unsigned int idx = y * width + x;
+				const unsigned int aovBase = idx * 3;
+
 				film->splat(px, py, frameBuffer[idx]);
+
+				Ray aovRay = scene->camera.generateRay(px, py, &samplers[0]);
+
+				Colour alb = albedo(aovRay);
+				albedoBuffer[aovBase + 0] = alb.r;
+				albedoBuffer[aovBase + 1] = alb.g;
+				albedoBuffer[aovBase + 2] = alb.b;
+
+				Colour nor = viewNormals(aovRay);
+				normalBuffer[aovBase + 0] = nor.r;
+				normalBuffer[aovBase + 1] = nor.g;
+				normalBuffer[aovBase + 2] = nor.b;
+
+				const float invSPP = (film->SPP > 0) ? (1.0f / (float)film->SPP) : 0.0f;
+				colorBuffer[aovBase + 0] = film->film[idx].r * invSPP;
+				colorBuffer[aovBase + 1] = film->film[idx].g * invSPP;
+				colorBuffer[aovBase + 2] = film->film[idx].b * invSPP;
+			}
+		}
+
+		// 6) OIDN denoise: color + albedo + normal -> output
+		{
+			oidn::DeviceRef device = oidn::newDevice();
+			device.commit();
+
+			oidn::FilterRef filter = device.newFilter("RT");
+			filter.setImage("color", colorBuffer.data(), oidn::Format::Float3, width, height);
+			filter.setImage("albedo", albedoBuffer.data(), oidn::Format::Float3, width, height);
+			filter.setImage("normal", normalBuffer.data(), oidn::Format::Float3, width, height);
+			filter.setImage("output", outputBuffer.data(), oidn::Format::Float3, width, height);
+			filter.set("hdr", true);
+			filter.commit();
+			filter.execute();
+
+			const char* errorMessage = NULL;
+			if (device.getError(errorMessage) != oidn::Error::None)
+			{
+				outputBuffer = colorBuffer;
+			}
+		}
+
+		// 7) Tonemap denoised output and draw to screen
+		for (unsigned int y = 0; y < height; y++)
+		{
+			for (unsigned int x = 0; x < width; x++)
+			{
+				const unsigned int idx = y * width + x;
+				const unsigned int base = idx * 3;
 
 				unsigned char r;
 				unsigned char g;
 				unsigned char b;
-				film->tonemap((int)x, (int)y, r, g, b, 1.0f);
+				tonemapLinearHDR(
+					outputBuffer[base + 0],
+					outputBuffer[base + 1],
+					outputBuffer[base + 2],
+					r, g, b, 1.0f);
 
-				// 5) Draw to screen
 				canvas->draw(x, y, r, g, b);
 			}
 		}
@@ -602,5 +675,47 @@ public:
 		Ray nextRay;
 		nextRay.init(shadingData.x + (nextDir * EPSILON), nextDir);
 		lightTracePath(nextRay, pathThroughput, Le, sampler, scalePerPath, depth + 1);
+	}
+	// 9-1
+	const std::vector<float>& getAlbedoBuffer() const
+	{
+		return albedoBuffer;
+	}
+	const std::vector<float>& getNormalBuffer() const
+	{
+		return normalBuffer;
+	}
+
+	// 9-2
+	const std::vector<float>& getColorBuffer() const
+	{
+		return colorBuffer;
+	}
+	//9-3
+	void tonemapLinearHDR(float inR, float inG, float inB, unsigned char& r, unsigned char& g, unsigned char& b, float exposure = 1.0f) const
+	{
+		inR = std::max(0.0f, inR * exposure);
+		inG = std::max(0.0f, inG * exposure);
+		inB = std::max(0.0f, inB * exposure);
+
+		const float whitePoint = 4.0f;
+		const float Cw = whitePoint / (1.0f + whitePoint);
+
+		float outR = (inR / (1.0f + inR)) / Cw;
+		float outG = (inG / (1.0f + inG)) / Cw;
+		float outB = (inB / (1.0f + inB)) / Cw;
+
+		const float invGamma = 1.0f / 2.2f;
+		outR = powf(std::max(0.0f, outR), invGamma);
+		outG = powf(std::max(0.0f, outG), invGamma);
+		outB = powf(std::max(0.0f, outB), invGamma);
+
+		outR = std::min(1.0f, std::max(0.0f, outR));
+		outG = std::min(1.0f, std::max(0.0f, outG));
+		outB = std::min(1.0f, std::max(0.0f, outB));
+
+		r = (unsigned char)(outR * 255.0f);
+		g = (unsigned char)(outG * 255.0f);
+		b = (unsigned char)(outB * 255.0f);
 	}
 };
