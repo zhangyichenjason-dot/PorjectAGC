@@ -420,11 +420,97 @@ public:
 		pdf = 1.0f / (4 * M_PI * SQ(use<SceneBounds>().sceneRadius));
 		return p;
 	}
+	//12-1（作业要求：环境贴图重要性采样 + MIS ）
 	Vec3 sampleDirectionFromLight(Sampler* sampler, float& pdf)
 	{
-		// Replace this tabulated sampling of environment maps
-		Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
-		pdf = SamplingDistributions::uniformSpherePDF(wi);
-		return wi;
+		const int W = env->width;
+		const int H = env->height;
+
+		// Safety fallback
+		if (W <= 0 || H <= 0 || marginalCDF.empty() || conditionalCDF.empty())
+		{
+			Vec3 wi = SamplingDistributions::uniformSampleSphere(sampler->next(), sampler->next());
+			pdf = SamplingDistributions::uniformSpherePDF(wi);
+			return -wi;
+		}
+
+		const float r1 = sampler->next();
+		const float r2 = sampler->next();
+
+		// 1) Sample row j from marginal CDF
+		int low = 0;
+		int high = (int)marginalCDF.size() - 1; // H
+		while (low + 1 < high)
+		{
+			const int mid = (low + high) / 2;
+			if (marginalCDF[mid] <= r1)
+			{
+				low = mid;
+			}
+			else
+			{
+				high = mid;
+			}
+		}
+		int j = low;
+		if (j < 0)
+		{
+			j = 0;
+		}
+		if (j >= H)
+		{
+			j = H - 1;
+		}
+
+		// 2) Sample column i from conditional CDF of row j
+		const std::vector<float>& rowCDF = conditionalCDF[j];
+		low = 0;
+		high = (int)rowCDF.size() - 1; // W
+		while (low + 1 < high)
+		{
+			const int mid = (low + high) / 2;
+			if (rowCDF[mid] <= r2)
+			{
+				low = mid;
+			}
+			else
+			{
+				high = mid;
+			}
+		}
+		int i = low;
+		if (i < 0)
+		{
+			i = 0;
+		}
+		if (i >= W)
+		{
+			i = W - 1;
+		}
+
+		// 3) Pixel center -> spherical direction (same as sample())
+		const float phi = (((float)i + 0.5f) / (float)W) * 2.0f * M_PI;
+		const float theta = (((float)j + 0.5f) / (float)H) * M_PI;
+
+		const float sinTheta = sinf(theta);
+		const float cosTheta = cosf(theta);
+		const float cosPhi = cosf(phi);
+		const float sinPhi = sinf(phi);
+
+		Vec3 wi(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+
+		// 4) Convert (u,v) continuous PDF to solid-angle PDF
+		if (sinTheta <= 1e-6f)
+		{
+			pdf = 0.0f;
+		}
+		else
+		{
+			const float uvPdf = marginalPDF[j] * conditionalPDF[j][i];
+			pdf = uvPdf / (2.0f * M_PI * M_PI * sinTheta);
+		}
+
+		// 5) For light tracing from env -> shoot into scene
+		return -wi;
 	}
 };

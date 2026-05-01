@@ -196,7 +196,11 @@ public:
 		// Miss: accumulate environment/background
 		if (shadingData.t >= FLT_MAX)
 		{
-			return pathThroughput * scene->background->evaluate(r.dir);
+			if (fromSpecular)
+			{
+				return pathThroughput * scene->background->evaluate(r.dir);
+			}
+			return Colour(0.0f, 0.0f, 0.0f);
 		}
 
 		Colour L(0.0f, 0.0f, 0.0f);
