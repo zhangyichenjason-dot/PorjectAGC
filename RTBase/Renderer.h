@@ -65,6 +65,7 @@ public:
 	{
 		film->clear();
 	}
+	//11-5原来只从环境贴图方向采一次样，现在同时从 BSDF 再采一次样，两者加权合并，各取所长
 	// 5-2 当你随机挑出了一盏灯后，这一步要计算这盏灯是不是真的能照亮你正在看的这个物体表面。你需要检查光线有没有被别的物体挡住（可见性/阴影），并且要算上光线照射角度带来的能量衰减（也就是讲义中提到的几何项 / Geometry Term）
 	Colour computeDirect(ShadingData shadingData, Sampler* sampler)
 	{
@@ -125,29 +126,59 @@ public:
 			return f * Le * weight;
 		}
 
-		// 环境光：sample 返回的是方向（方向域）
-		Vec3 wi = lightSample.normalize();
-		float cosSurface = std::max(0.0f, Dot(shadingData.sNormal, wi));
-		if (cosSurface <= 0.0f)
-		{
-			return Colour(0.0f, 0.0f, 0.0f);
-		}
+		// 非面光源（环境光）：MIS = Light Sampling + BSDF Sampling
+		Colour Ld(0.0f, 0.0f, 0.0f);
 
-		// 阴影射线打到场景包围盒之外（近似“射向无穷远”）
 		const Vec3 centre = use<SceneBounds>().sceneCentre;
 		const float radius = use<SceneBounds>().sceneRadius;
 		const float distToCentre = (shadingData.x - centre).length();
 		const float tMax = distToCentre + radius + 1.0f;
-		Vec3 farPoint = shadingData.x + (wi * tMax);
 
-		if (!scene->visible(shadingData.x, farPoint))
+		// [1] Light Sampling
 		{
-			return Colour(0.0f, 0.0f, 0.0f);
+			Vec3 wiL = lightSample.normalize();
+			const float pL = lightPDF;
+
+			float cosTheta = std::max(0.0f, Dot(shadingData.sNormal, wiL));
+			if (pL > 0.0f && cosTheta > 0.0f)
+			{
+				Vec3 farPoint = shadingData.x + (wiL * tMax);
+				if (scene->visible(shadingData.x, farPoint))
+				{
+					float pB = shadingData.bsdf->PDF(shadingData, wiL);
+					float denom = pL + pB;
+					float wL = (denom > 0.0f) ? (pL / denom) : 0.0f;
+
+					Colour f = shadingData.bsdf->evaluate(shadingData, wiL);
+					Ld = Ld + (f * Le * (wL * cosTheta / (pL * lightPMF)));
+				}
+			}
 		}
 
-		Colour f = shadingData.bsdf->evaluate(shadingData, wi);
-		float weight = cosSurface / (lightPDF * lightPMF);
-		return f * Le * weight;
+		// [2] BSDF Sampling
+		{
+			Colour fSample;
+			float pB = 0.0f;
+			Vec3 wiB = shadingData.bsdf->sample(shadingData, sampler, fSample, pB);
+
+			float cosTheta = std::max(0.0f, Dot(shadingData.sNormal, wiB));
+			if (pB > 0.0f && cosTheta > 0.0f)
+			{
+				Vec3 farPoint = shadingData.x + (wiB * tMax);
+				if (scene->visible(shadingData.x, farPoint))
+				{
+					float pL = light->PDF(shadingData, wiB);
+					float denom = pL + pB;
+					float wB = (denom > 0.0f) ? (pB / denom) : 0.0f;
+
+					Colour LeB = light->evaluate(wiB);
+					Colour f = shadingData.bsdf->evaluate(shadingData, wiB);
+					Ld = Ld + (f * LeB * (wB * cosTheta / (pB * lightPMF)));
+				}
+			}
+		}
+
+		return Ld;
 	}
 	// 5-3 让光线打中物体后，不仅算一下头顶上的灯光（上一步的直接光照），还要随机找个方向继续弹射出去，去收集“别的物体反射过来的光”。光线这样一路弹射形成的轨迹，就叫“路径（Path）”
 	// 7-适配把 pathTrace 的“间接弹射”从均匀半球采样改为 BSDF::sample(...)，并对纯镜面分支做了特殊处理。
