@@ -11,6 +11,8 @@
 #include <thread>
 #include <functional>
 #include <vector>
+#include <mutex>
+#include <atomic>
 #include <OpenImageDenoise/oidn.hpp>
 
 class RayTracer
@@ -22,6 +24,8 @@ public:
 	MTRandom *samplers;
 	std::thread **threads;
 	int numProcs;
+	//10-1 准备（多线程分块-讲义没有）
+	std::mutex filmSplatMutex;
 	// 9-1 准备
 	// AOV buffers: width * height * 3 (RGB float)
 	std::vector<float> albedoBuffer;
@@ -310,39 +314,77 @@ public:
 				const int by = y / blockSize;
 				return by * blocksX + bx;
 			};
-
+		// 10-2 把现在两个嵌套 for 循环（遍历 y、x）的逻辑，改成按 tile 分发给多个线程执行。
 		// 1) Pilot pass
-		for (unsigned int y = 0; y < height; y++)
 		{
-			for (unsigned int x = 0; x < width; x++)
+			const int workerCount = std::max(1, numProcs);
+			std::atomic<int> nextTile(0);
+			std::vector<std::thread> workers;
+			workers.reserve((size_t)workerCount);
+
+			for (int threadIndex = 0; threadIndex < workerCount; ++threadIndex)
 			{
-				Colour pixelAccum(0.0f, 0.0f, 0.0f);
+				workers.emplace_back([&, threadIndex]()
+					{
+						Sampler* sampler = &samplers[threadIndex];
 
-				for (int s = 0; s < pilotSPP; s++)
-				{
-					float px = (float)x + samplers[0].next();
-					float py = (float)y + samplers[0].next();
+						while (true)
+						{
+							const int tileId = nextTile.fetch_add(1);
+							if (tileId >= blockCount)
+							{
+								break;
+							}
 
-					Ray ray = scene->camera.generateRay(px, py, &samplers[0]);
-					Colour throughput(1.0f, 1.0f, 1.0f);
-					Colour sampleCol = pathTrace(ray, throughput, 0, &samplers[0]);
+							const int tileX = tileId % blocksX;
+							const int tileY = tileId / blocksX;
 
-					sampleCol.r = std::min(sampleCol.r, 100.0f);
-					sampleCol.g = std::min(sampleCol.g, 100.0f);
-					sampleCol.b = std::min(sampleCol.b, 100.0f);
+							const unsigned int xBegin = (unsigned int)(tileX * blockSize);
+							const unsigned int yBegin = (unsigned int)(tileY * blockSize);
+							const unsigned int xEnd = std::min((unsigned int)((tileX + 1) * blockSize), width);
+							const unsigned int yEnd = std::min((unsigned int)((tileY + 1) * blockSize), height);
 
-					pixelAccum = pixelAccum + sampleCol;
-				}
+							const int bi = tileId;
 
-				Colour pilotMean = pixelAccum / (float)pilotSPP;
-				const unsigned int idx = y * width + x;
-				frameBuffer[idx] = pilotMean;
+							for (unsigned int y = yBegin; y < yEnd; ++y)
+							{
+								for (unsigned int x = xBegin; x < xEnd; ++x)
+								{
+									Colour pixelAccum(0.0f, 0.0f, 0.0f);
 
-				const float lum = pilotMean.Lum();
-				const int bi = blockIndexOf((int)x, (int)y);
-				blockSumLum[bi] += lum;
-				blockSumLumSq[bi] += lum * lum;
-				blockPixelCount[bi]++;
+									for (int s = 0; s < pilotSPP; ++s)
+									{
+										const float px = (float)x + sampler->next();
+										const float py = (float)y + sampler->next();
+
+										Ray ray = scene->camera.generateRay(px, py, sampler);
+										Colour throughput(1.0f, 1.0f, 1.0f);
+										Colour sampleCol = pathTrace(ray, throughput, 0, sampler);
+
+										sampleCol.r = std::min(sampleCol.r, 100.0f);
+										sampleCol.g = std::min(sampleCol.g, 100.0f);
+										sampleCol.b = std::min(sampleCol.b, 100.0f);
+
+										pixelAccum = pixelAccum + sampleCol;
+									}
+
+									Colour pilotMean = pixelAccum / (float)pilotSPP;
+									const unsigned int idx = y * width + x;
+									frameBuffer[idx] = pilotMean;
+
+									const float lum = pilotMean.Lum();
+									blockSumLum[bi] += lum;
+									blockSumLumSq[bi] += lum * lum;
+									blockPixelCount[bi]++;
+								}
+							}
+						}
+					});
+			}
+
+			for (size_t i = 0; i < workers.size(); ++i)
+			{
+				workers[i].join();
 			}
 		}
 
@@ -393,38 +435,76 @@ public:
 			}
 			blockSPP[bi] = spp;
 		}
-
+		//10-2
 		// 4) Adaptive refinement pass
-		for (unsigned int y = 0; y < height; y++)
 		{
-			for (unsigned int x = 0; x < width; x++)
+			const int workerCount = std::max(1, numProcs);
+			std::atomic<int> nextTile(0);
+			std::vector<std::thread> workers;
+			workers.reserve((size_t)workerCount);
+
+			for (int threadIndex = 0; threadIndex < workerCount; ++threadIndex)
 			{
-				const int bi = blockIndexOf((int)x, (int)y);
-				const int targetSPP = blockSPP[bi];
-
-				if (targetSPP > pilotSPP)
-				{
-					unsigned int idx = y * width + x;
-					Colour pixelAccum = frameBuffer[idx] * (float)pilotSPP;
-
-					for (int s = pilotSPP; s < targetSPP; s++)
+				workers.emplace_back([&, threadIndex]()
 					{
-						float px = (float)x + samplers[0].next();
-						float py = (float)y + samplers[0].next();
+						Sampler* sampler = &samplers[threadIndex];
 
-						Ray ray = scene->camera.generateRay(px, py, &samplers[0]);
-						Colour throughput(1.0f, 1.0f, 1.0f);
-						Colour sampleCol = pathTrace(ray, throughput, 0, &samplers[0]);
+						while (true)
+						{
+							const int tileId = nextTile.fetch_add(1);
+							if (tileId >= blockCount)
+							{
+								break;
+							}
 
-						sampleCol.r = std::min(sampleCol.r, 100.0f);
-						sampleCol.g = std::min(sampleCol.g, 100.0f);
-						sampleCol.b = std::min(sampleCol.b, 100.0f);
+							const int tileX = tileId % blocksX;
+							const int tileY = tileId / blocksX;
 
-						pixelAccum = pixelAccum + sampleCol;
-					}
+							const unsigned int xBegin = (unsigned int)(tileX * blockSize);
+							const unsigned int yBegin = (unsigned int)(tileY * blockSize);
+							const unsigned int xEnd = std::min((unsigned int)((tileX + 1) * blockSize), width);
+							const unsigned int yEnd = std::min((unsigned int)((tileY + 1) * blockSize), height);
 
-					frameBuffer[idx] = pixelAccum / (float)targetSPP;
-				}
+							const int bi = tileId;
+							const int targetSPP = blockSPP[bi];
+							if (targetSPP <= pilotSPP)
+							{
+								continue;
+							}
+
+							for (unsigned int y = yBegin; y < yEnd; ++y)
+							{
+								for (unsigned int x = xBegin; x < xEnd; ++x)
+								{
+									const unsigned int idx = y * width + x;
+									Colour pixelAccum = frameBuffer[idx] * (float)pilotSPP;
+
+									for (int s = pilotSPP; s < targetSPP; ++s)
+									{
+										const float px = (float)x + sampler->next();
+										const float py = (float)y + sampler->next();
+
+										Ray ray = scene->camera.generateRay(px, py, sampler);
+										Colour throughput(1.0f, 1.0f, 1.0f);
+										Colour sampleCol = pathTrace(ray, throughput, 0, sampler);
+
+										sampleCol.r = std::min(sampleCol.r, 100.0f);
+										sampleCol.g = std::min(sampleCol.g, 100.0f);
+										sampleCol.b = std::min(sampleCol.b, 100.0f);
+
+										pixelAccum = pixelAccum + sampleCol;
+									}
+
+									frameBuffer[idx] = pixelAccum / (float)targetSPP;
+								}
+							}
+						}
+					});
+			}
+
+			for (size_t i = 0; i < workers.size(); ++i)
+			{
+				workers[i].join();
 			}
 		}
 
@@ -438,7 +518,9 @@ public:
 				const unsigned int idx = y * width + x;
 				const unsigned int aovBase = idx * 3;
 
+				filmSplatMutex.lock();
 				film->splat(px, py, frameBuffer[idx]);
+				filmSplatMutex.unlock();
 
 				Ray aovRay = scene->camera.generateRay(px, py, &samplers[0]);
 
