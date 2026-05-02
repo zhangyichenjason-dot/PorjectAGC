@@ -15,6 +15,13 @@
 #include <atomic>
 #include <OpenImageDenoise/oidn.hpp>
 
+//补充Instant Radiosity 讲义原话："Suggest to add a VPL class: Store ShadingData; Colour Le"
+struct VPL
+{
+	ShadingData shadingData;	// 包含 VPL 的位置、法线、BSDF
+	Colour Le;					// VPL 携带的辐射量（光源到此处的路径 throughput）
+};
+
 class RayTracer
 {
 public:
@@ -24,6 +31,8 @@ public:
 	MTRandom *samplers;
 	std::thread **threads;
 	int numProcs;
+	//补充Instant Radiosity
+	std::vector<VPL> vpls;
 	//10-1 准备（多线程分块-讲义没有）
 	std::mutex filmSplatMutex;
 	// 9-1 准备
@@ -180,6 +189,69 @@ public:
 
 		return Ld;
 	}
+	//补充Instant Radiosity讲义原话："Second pass: Trace a path from the camera to the first non-specular vertex; Calculate direct light from each VPL; BSDF at s × Geometry Term × BSDF at t"
+	Colour computeVPLContribution(const ShadingData& shadingData)
+	{
+		Colour result(0.0f, 0.0f, 0.0f);
+
+		if (shadingData.bsdf == NULL || vpls.empty())
+		{
+			return result;
+		}
+
+		// Geometry Term singularity guard
+		const float geometryThreshold = 10.0f;
+
+		for (size_t i = 0; i < vpls.size(); ++i)
+		{
+			const VPL& y = vpls[i];
+			if (y.shadingData.bsdf == NULL)
+			{
+				continue;
+			}
+
+			Vec3 toVPL = y.shadingData.x - shadingData.x;
+			float distSq = toVPL.lengthSq();
+			if (distSq <= (EPSILON * EPSILON))
+			{
+				continue;
+			}
+
+			float dist = sqrtf(distSq);
+			Vec3 wi = toVPL / dist; // from x to y
+
+			float cosX = std::max(0.0f, Dot(shadingData.sNormal, wi));
+			if (cosX <= 0.0f)
+			{
+				continue;
+			}
+
+			float cosY = std::max(0.0f, Dot(y.shadingData.sNormal, -wi));
+			if (cosY <= 0.0f)
+			{
+				continue;
+			}
+
+			float G = (cosX * cosY) / distSq;
+			if (G > geometryThreshold)
+			{
+				continue;
+			}
+
+			if (!scene->visible(shadingData.x, y.shadingData.x))
+			{
+				continue;
+			}
+
+			Colour f_x = shadingData.bsdf->evaluate(shadingData, wi);
+			Colour f_y = y.shadingData.bsdf->evaluate(y.shadingData, -wi);
+
+			result = result + (f_x * G * f_y * y.Le);
+		}
+
+		return result;
+	}
+	//补充Instant Radiosity
 	// 5-3 让光线打中物体后，不仅算一下头顶上的灯光（上一步的直接光照），还要随机找个方向继续弹射出去，去收集“别的物体反射过来的光”。光线这样一路弹射形成的轨迹，就叫“路径（Path）”
 	// 7-适配把 pathTrace 的“间接弹射”从均匀半球采样改为 BSDF::sample(...)，并对纯镜面分支做了特殊处理。
 	Colour pathTrace(Ray& r, Colour& pathThroughput, int depth, Sampler* sampler, bool fromSpecular = true)
@@ -216,6 +288,14 @@ public:
 
 		// Add direct lighting at current bounce
 		L = L + (pathThroughput * computeDirect(shadingData, sampler));
+
+		//补充Instant Radiosity讲义原话："Second pass: Trace a path from the camera to the first non-specular vertex"
+		// Instant Radiosity second pass:
+		// camera path -> first non-specular vertex only
+		if (fromSpecular && !shadingData.bsdf->isPureSpecular() && !vpls.empty())
+		{
+			L = L + (pathThroughput * computeVPLContribution(shadingData));
+		}
 
 		// Indirect bounce: BSDF-driven sampling
 		Colour f;
@@ -319,6 +399,10 @@ public:
 		// OIDN input: linear HDR color (pre-tonemap)
 		colorBuffer.assign(pixelCount * 3, 0.0f);
 		std::vector<float> outputBuffer(pixelCount * 3, 0.0f);
+
+		//补充Instant Radiosity
+		// 每帧重新生成 VPLs
+		generateVPLs(512, &samplers[0]);
 
 		// 8-5 在现有路径追踪循环外，额外执行 light tracing，并按光路数归一化
 		const int numLightPaths = (int)(width * height);
@@ -732,6 +816,136 @@ public:
 		// 8) Continue light path tracing
 		lightTracePath(ray, pathThroughput, Le, sampler, scalePerPath);
 	}
+	//补充Instant Radiosity 讲义原话："Trace a small number of well distributed paths from the light; Store a VPL data at each interaction; For area lights, initialize with ShadingData where p = light->samplePositionFromLight(sampler, pdfPosition);"
+	void generateVPLs(int numPaths, Sampler* sampler)
+	{
+		vpls.clear();
+
+		if (numPaths <= 0 || sampler == NULL || scene == NULL)
+		{
+			return;
+		}
+
+		// 给“光源起点 VPL”提供一个稳定可用的 BSDF（讲义建议可用 DiffuseBSDF）
+		static Texture vplWhiteTexture;
+		static DiffuseBSDF vplLightBSDF;
+		static bool vplLightBSDFInitialized = false;
+		if (!vplLightBSDFInitialized)
+		{
+			vplWhiteTexture.loadDefault();
+			vplLightBSDF = DiffuseBSDF(&vplWhiteTexture);
+			vplLightBSDFInitialized = true;
+		}
+
+		const int maxDepth = 4; // 讲义建议 3~5
+
+		// 预留空间：每条路径大约 1 + maxDepth 个 VPL
+		vpls.reserve((size_t)numPaths * (size_t)(maxDepth + 1));
+
+		for (int i = 0; i < numPaths; ++i)
+		{
+			// 1) 采样一盏灯
+			float lightPMF = 0.0f;
+			Light* light = scene->sampleLight(sampler, lightPMF);
+			if (light == NULL || lightPMF <= 0.0f)
+			{
+				continue;
+			}
+
+			// 2) 在光源上采样起点
+			float pdfPosition = 0.0f;
+			Vec3 p = light->samplePositionFromLight(sampler, pdfPosition);
+			if (pdfPosition <= 0.0f)
+			{
+				continue;
+			}
+
+			// 4) 采样出射方向（后续路径追踪要用）
+			float pdfDirection = 0.0f;
+			Vec3 dir = light->sampleDirectionFromLight(sampler, pdfDirection);
+			if (pdfDirection <= 0.0f)
+			{
+				continue;
+			}
+
+			// 3) 构建光源表面 ShadingData，作为第一个 VPL
+			ShadingData lightSD = {};
+			lightSD.x = p;
+			lightSD.wo = -dir;
+
+			Vec3 lightNormal = light->normal(lightSD, dir);
+
+			VPL vpl0;
+			vpl0.shadingData = lightSD;
+			vpl0.shadingData.sNormal = lightNormal;
+			vpl0.shadingData.gNormal = lightNormal;
+			vpl0.shadingData.bsdf = &vplLightBSDF;
+
+			Colour Le0 = light->evaluate(lightNormal);
+			if (Le0.Lum() <= 0.0f)
+			{
+				Le0 = light->evaluate(-lightNormal);
+			}
+			if (Le0.Lum() <= 0.0f)
+			{
+				Le0 = light->evaluate(-dir);
+			}
+
+			vpl0.Le = Le0 / (pdfPosition * lightPMF * (float)numPaths);
+			vpls.push_back(vpl0);
+
+			Colour throughput = vpl0.Le / pdfDirection;
+			Ray ray;
+			ray.init(p + (dir * EPSILON), dir);
+
+			// 5) 追踪光路，在每个交点存储 VPL
+			for (int depth = 0; depth < maxDepth; ++depth)
+			{
+				IntersectionData isect = scene->traverse(ray);
+				ShadingData sd = scene->calculateShadingData(isect, ray);
+
+				if (sd.t >= FLT_MAX)
+				{
+					break;
+				}
+				if (sd.bsdf == NULL || sd.bsdf->isPureSpecular())
+				{
+					break; // 镜面不存 VPL
+				}
+
+				VPL vpl;
+				vpl.shadingData = sd;
+				vpl.Le = throughput;
+				vpls.push_back(vpl);
+
+				// Russian Roulette
+				float continueProb = std::min(0.95f, throughput.Lum());
+				if (continueProb <= 0.0f)
+				{
+					break;
+				}
+				if (sampler->next() > continueProb)
+				{
+					break;
+				}
+				throughput = throughput / continueProb;
+
+				// BSDF 采样下一方向
+				Colour f;
+				float pdf = 0.0f;
+				Vec3 wi = sd.bsdf->sample(sd, sampler, f, pdf);
+				if (pdf <= 0.0f)
+				{
+					break;
+				}
+
+				float cosTheta = fabsf(Dot(sd.sNormal, wi));
+				throughput = throughput * f * (cosTheta / pdf);
+
+				ray.init(sd.x + (wi * EPSILON), wi);
+			}
+		}
+	}
 	// 8-4 递归追踪从光源出发的光路。与 pathTrace() 的主要区别是：不计算直接光照，而是在每个交点都尝试连接到相机。
 	void lightTracePath(Ray& ray, Colour pathThroughput, Colour Le, Sampler* sampler, float scalePerPath, int depth = 0)
 	{
@@ -836,3 +1050,4 @@ public:
 		b = (unsigned char)(outB * 255.0f);
 	}
 };
+	
