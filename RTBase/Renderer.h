@@ -51,10 +51,12 @@ public:
 
 		// 4-4
 		// Ensure each worker/thread gets a different RNG seed.
+		// 为每个线程生成不同的随机种子
 		std::random_device rd;
 		const unsigned int baseSeed = rd();
 		for (int i = 0; i < numProcs; ++i)
 		{
+			// 哈希偏移保证每个线程的种子互不相同
 			const unsigned int seed = baseSeed ^ (0x9e3779b9u + (unsigned int)i * 0x85ebca6bu);
 			samplers[i] = MTRandom(seed);
 		}

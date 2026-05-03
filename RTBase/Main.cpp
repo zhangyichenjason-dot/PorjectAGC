@@ -1,4 +1,4 @@
-#include "GEMLoader.h"
+﻿#include "GEMLoader.h"
 #include "Renderer.h"
 #include "SceneLoader.h"
 #include "Geometry.h"
@@ -171,6 +171,14 @@ int main(int argc, char *argv[])
 		}
 	}
 	Scene* scene = loadScene(sceneName);
+
+	////快速测试BVH开关
+	//const bool enableBVH = false;
+	//if (!enableBVH)
+	//{
+	//	scene->bvh = NULL;
+	//}
+
 	// 6-2
 	scene->camera.setThinLens(0.001f, (viewcamera.to - viewcamera.from).length());
 	GamesEngineeringBase::Window canvas;

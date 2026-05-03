@@ -577,6 +577,8 @@ private:
 		centroidBounds.reset();
 		for (unsigned int i = start; i < end; i++)
 		{
+			// 算出能包住所有三角形的盒子 (bounds)
+			// 算出所有三角形中心点分布的范围 (centroidBounds)
 			AABB tb = triangleBounds(inputTriangles[i]);
 			bounds.extend(tb.min);
 			bounds.extend(tb.max);
@@ -585,6 +587,7 @@ private:
 		}
 
 		// Leaf stop condition
+		//如果三角形的数量已经很少了（小于 MAXNODE_TRIANGLES），或者这一块地方实在太小了，就直接把它当成一个“叶子节点”，收工回家。
 		if (triangleCount <= MAXNODE_TRIANGLES)
 		{
 			return;
@@ -612,7 +615,7 @@ private:
 				continue;
 			}
 
-			SAHBin bins[BUILD_BINS];
+			SAHBin bins[BUILD_BINS];// 准备一排小桶
 
 			// Fill bins
 			for (unsigned int i = start; i < end; i++)
@@ -646,6 +649,7 @@ private:
 			unsigned int runLeftCount = 0;
 			for (int i = 0; i < BUILD_BINS - 1; i++)
 			{
+				// 计算这个位置切下去的“成本”
 				runLeftCount += bins[i].count;
 				if (bins[i].count > 0)
 				{
@@ -688,7 +692,7 @@ private:
 					(leftArea / parentArea) * ((float)leftCount[s] * TRIANGLE_COST) +
 					(rightArea / parentArea) * ((float)rightCount[s] * TRIANGLE_COST);
 
-				if (cost < bestCost)
+				if (cost < bestCost)// 记住最划算的方案
 				{
 					bestCost = cost;
 					bestAxis = axis;
@@ -750,4 +754,6 @@ private:
 		firstTriangle = 0;
 		triangleCount = 0;
 	}
+
+
 };

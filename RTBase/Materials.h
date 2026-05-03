@@ -119,15 +119,14 @@ public:
 	static float Dggx(Vec3 h, float alpha)
 	{
 		float cosTheta = h.z;
-		if (cosTheta <= 0.0f)
-		{
-			return 0.0f;
-		}
+		if (cosTheta <= 0.0f) return 0.0f;
 
-		float cos2Theta = cosTheta * cosTheta;
-		float tan2Theta = (1.0f - cos2Theta) / cos2Theta;
 		float alphaSq = alpha * alpha;
-		float denom = (float)M_PI * cos2Theta * cos2Theta * (alphaSq + tan2Theta) * (alphaSq + tan2Theta);
+		float cos2Theta = cosTheta * cosTheta;
+
+		// 图片二底部的核心逻辑：(cos^2 * (a^2 - 1) + 1)
+		float denomInner = cos2Theta * (alphaSq - 1.0f) + 1.0f;
+		float denom = (float)M_PI * denomInner * denomInner;
 
 		return alphaSq / denom;
 	}
@@ -295,9 +294,10 @@ public:
 		float r2 = sampler->next();
 
 		float phi_h = 2.0f * (float)M_PI * r2;
+		// GGX 分布的逆 CDF
 		float cosTheta_h = sqrtf((1.0f - r1) / ((alpha * alpha * r1) + (1.0f - r1)));
 		float sinTheta_h = sqrtf(std::max(0.0f, 1.0f - cosTheta_h * cosTheta_h));
-
+		// 通过反射公式得到入射方向
 		Vec3 h = Vec3(sinTheta_h * cosf(phi_h), sinTheta_h * sinf(phi_h), cosTheta_h);
 
 		float dot_wo_h = woLocal.dot(h);
@@ -307,7 +307,8 @@ public:
 			reflectedColour = Colour(0.0f, 0.0f, 0.0f);
 			return Vec3(0.0f, 0.0f, 0.0f);
 		}
-
+		// 通过半程向量h和出射方向wo计算入射方向wi
+		// 反射公式：wi = 2 * dot(wo, h) * h - wo
 		Vec3 wiLocal = (h * (2.0f * dot_wo_h)) - woLocal;
 		if (wiLocal.z <= 0.0f)
 		{
@@ -421,7 +422,7 @@ public:
 	Vec3 sample(const ShadingData& shadingData, Sampler* sampler, Colour& reflectedColour, float& pdf)
 	{
 		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
-
+		// 判断光线从内侧还是外侧入射
 		float etaI = (woLocal.z > 0.0f) ? extIOR : intIOR;
 		float etaT = (woLocal.z > 0.0f) ? intIOR : extIOR;
 
@@ -430,12 +431,14 @@ public:
 		Vec3 wiLocal;
 		if (sampler->next() < F)
 		{
+			// 反射分支
 			wiLocal = Vec3(-woLocal.x, -woLocal.y, woLocal.z);
 			reflectedColour = albedo->sample(shadingData.tu, shadingData.tv);
 			pdf = F;
 		}
 		else
 		{
+			// 折射分支（Snell 定律）
 			float eta = etaI / etaT;
 			float cosThetaI = fabsf(woLocal.z);
 			float sinThetaTSq = eta * eta * (1.0f - cosThetaI * cosThetaI);
@@ -448,6 +451,7 @@ public:
 			}
 			else
 			{
+				// 全内反射 —— 退回镜面反射
 				float cosThetaT = sqrtf(1.0f - sinThetaTSq);
 				float sign = (woLocal.z > 0.0f) ? -1.0f : 1.0f;
 				wiLocal = Vec3(-eta * woLocal.x, -eta * woLocal.y, sign * cosThetaT);
@@ -938,3 +942,5 @@ public:
 		return base->mask(shadingData);
 	}
 };
+
+
