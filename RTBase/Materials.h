@@ -35,33 +35,46 @@ class ShadingHelper
 {
 public:
 	// 7-4 金属（导体）的折射率是复数，虚部k描述光在金属内部的衰减（趋肤效应）。Rs（垂直偏振）和Rp（平行偏振）：光是横波，有两个偏振方向，金属对它们的反射率不同。实际渲染用非偏振光，取平均 对rgb三通道分别算：金属的颜色正是因为不同波长的光反射率不同（比如金反射红色多，蓝色少），所以必须分通道计算
+	// 算出金属在某个角度下能弹回多少光（反射率）
+	//英文翻译：Calculate how much light a metal can reflect at a certain angle (reflectance)
 	static Colour fresnelConductor(float cosTheta, Colour ior, Colour k)
 	{
+		// 1. 确保角度合法（0到1之间），防止数学报错
+		//英文：Ensure the angle is valid (between 0 and 1) to prevent mathematical errors
 		cosTheta = std::max(0.0f, std::min(1.0f, cosTheta));
-
 		float cosThetaSq = cosTheta * cosTheta;
-		float sinThetaSq = 1.0f - cosThetaSq;
-		(void)sinThetaSq;
 
+		// 针对红/绿/蓝某一种颜色算反射率
+		//英文：Calculate the reflectance for a single color channel (red, green, or blue)
 		auto evalChannel = [&](float n, float kk)
 			{
+				// 金属属性总和（n和k的平方和）
+				//英文：Total metal property (sum of squares of n and k)
 				float n2k2 = n * n + kk * kk;
 
+				// 计算横向震动光的反射比例
+				//英文：Calculate the reflectance for s-polarized light
 				float Rs_num = n2k2 - 2.0f * n * cosTheta + cosThetaSq;
 				float Rs_den = n2k2 + 2.0f * n * cosTheta + cosThetaSq;
 				float Rs = Rs_num / Rs_den;
 
+				// 计算纵向震动光的反射比例
+				//英文：Calculate the reflectance for p-polarized light
 				float Rp_num = n2k2 * cosThetaSq - 2.0f * n * cosTheta + 1.0f;
 				float Rp_den = n2k2 * cosThetaSq + 2.0f * n * cosTheta + 1.0f;
 				float Rp = Rp_num / Rp_den;
 
+				// 现实中光是乱跳的，所以把两种震动结果取个平均值
+				//英文：In reality, light is unpolarized, so we take the average of the two polarization results
 				return (Rs + Rp) * 0.5f;
 			};
 
+		// 2. 分别算出红、绿、蓝的反射率，合起来就是金属的反射颜色
+		//英文：Calculate the reflectance for red, green, and blue channels separately, then combine them to get the metal's reflectance color
 		return Colour(
-			evalChannel(ior.r, k.r),
-			evalChannel(ior.g, k.g),
-			evalChannel(ior.b, k.b)
+			evalChannel(ior.r, k.r), 
+			evalChannel(ior.g, k.g), 
+			evalChannel(ior.b, k.b)  
 		);
 	}
 	// 7-5 用于玻璃材质
@@ -119,15 +132,14 @@ public:
 	static float Dggx(Vec3 h, float alpha)
 	{
 		float cosTheta = h.z;
-		if (cosTheta <= 0.0f)
-		{
-			return 0.0f;
-		}
+		if (cosTheta <= 0.0f) return 0.0f;
 
-		float cos2Theta = cosTheta * cosTheta;
-		float tan2Theta = (1.0f - cos2Theta) / cos2Theta;
 		float alphaSq = alpha * alpha;
-		float denom = (float)M_PI * cos2Theta * cos2Theta * (alphaSq + tan2Theta) * (alphaSq + tan2Theta);
+		float cos2Theta = cosTheta * cosTheta;
+
+		//(cos^2 * (a^2 - 1) + 1)
+		float denomInner = cos2Theta * (alphaSq - 1.0f) + 1.0f;
+		float denom = (float)M_PI * denomInner * denomInner;
 
 		return alphaSq / denom;
 	}
@@ -273,6 +285,7 @@ public:
 	{
 		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
 
+		// alpha < 0.001f退化为镜面：当粗糙度非常小时，GGX的分布会变得非常尖锐，数值上接近于一个狄拉克delta函数，这时直接用镜面反射的处理更稳定，避免数值问题
 		if (alpha < 0.001f)
 		{
 			Vec3 wiLocal = Vec3(-woLocal.x, -woLocal.y, woLocal.z);

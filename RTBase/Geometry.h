@@ -344,8 +344,6 @@ public:
 	BVHNode* r;
 	BVHNode* l;
 
-	// Leaf storage in reordered global triangle array:
-	// [firstTriangle, firstTriangle + triangleCount)
 	unsigned int firstTriangle;
 	unsigned int triangleCount;
 
@@ -384,6 +382,7 @@ public:
 			return;
 		}
 		// 如果这个节点最近可能命中的距离都比当前已知最近交点更远，直接剪枝
+		//If the nearest possible hit distance for this node is farther than the currently known closest intersection, we can prune this node.
 		if (tNode > intersection.t)
 		{
 			return;
