@@ -228,6 +228,7 @@ public:
 		Vec3 woLocal = shadingData.frame.toLocal(shadingData.wo);
 		Vec3 wiLocal = Vec3(-woLocal.x, -woLocal.y, woLocal.z);
 		pdf = 1.0f;
+		//pdf = 1.0f / fabsf(wiLocal.z);
 		reflectedColour = albedo->sample(shadingData.tu, shadingData.tv) ;
 		return shadingData.frame.toWorld(wiLocal);
 	}
@@ -272,6 +273,7 @@ public:
 		albedo = _albedo;
 		eta = _eta;
 		k = _k;
+		//alpha = roughness;
 		alpha = 1.62142f * sqrtf(roughness);
 	}
 	// 7-9 evaluate（Cook-Torrance BRDF）：算半程向量h：微表面理论中，只有法线恰好朝向wi和wo中间（即h方向）的微表面才能把光从wo方向反射到wi方向

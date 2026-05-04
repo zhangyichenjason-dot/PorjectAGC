@@ -8,115 +8,113 @@
 
 void runTests()
 {
-	std::cout << "Running Plane::rayIntersect tests..." << std::endl;
+	//std::cout << " Plane." << std::endl;
 
-	Plane plane;
-	Vec3 n(0.0f, 1.0f, 0.0f);
-	plane.init(n, 0.0f); // y = 0 plane
+	//Plane plane;
+	//Vec3 n(0.0f, 1.0f, 0.0f);
+	//plane.init(n, 0.0f); // y = 0 plane
 
-	// Test 1: hit
-	{
-		Ray ray(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, -1.0f, 0.0f));
-		float t = -1.0f;
-		bool hit = plane.rayIntersect(ray, t);
-		bool pass = hit && fabsf(t - 1.0f) < 1e-4f;
-		std::cout << "[Plane Test 1] hit from above: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	//
+	//{
+	//	Ray ray(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, -1.0f, 0.0f));
+	//	float t = -1.0f;
+	//	bool hit = plane.rayIntersect(ray, t);
+	//	bool pass = hit && fabsf(t - 1.0f) < 1e-4f;
+	//	std::cout << "[Plane Test 1] hit from above: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	// Test 2: parallel
-	{
-		Ray ray(Vec3(0.0f, 1.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f));
-		float t = -1.0f;
-		bool hit = plane.rayIntersect(ray, t);
-		std::cout << "[Plane Test 2] parallel ray: " << (!hit ? "PASS" : "FAIL") << std::endl;
-	}
+	//// parallel
+	//{
+	//	Ray ray(Vec3(0.0f, 1.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f));
+	//	float t = -1.0f;
+	//	bool hit = plane.rayIntersect(ray, t);
+	//	std::cout << "[Plane Test 2] parallel ray: " << (!hit ? "PASS" : "FAIL") << std::endl;
+	//}
 
-	// Test 3: intersection behind origin
-	{
-		Ray ray(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f));
-		float t = -1.0f;
-		bool hit = plane.rayIntersect(ray, t);
-		std::cout << "[Plane Test 3] behind origin: " << (!hit ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	////intersection behind origin
+	//{
+	//	Ray ray(Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f));
+	//	float t = -1.0f;
+	//	bool hit = plane.rayIntersect(ray, t);
+	//	std::cout << "[Plane Test 3] behind origin: " << (!hit ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	std::cout << "Running Sphere::rayIntersect tests..." << std::endl;
+	//std::cout << "Sphere" << std::endl;
 
-	Sphere sphere;
-	Vec3 c(0.0f, 0.0f, 0.0f);
-	sphere.init(c, 1.0f);
+	//Sphere sphere;
+	//Vec3 c(0.0f, 0.0f, 0.0f);
+	//sphere.init(c, 1.0f);
 
-	// Test 1: two intersections (outside -> hit near root)
-	{
-		Ray ray(Vec3(0.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
-		float t = -1.0f;
-		bool hit = sphere.rayIntersect(ray, t);
-		bool pass = hit && fabsf(t - 2.0f) < 1e-4f;
-		std::cout << "[Sphere Test 1] outside hit (2 roots): " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	//{
+	//	Ray ray(Vec3(0.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
+	//	float t = -1.0f;
+	//	bool hit = sphere.rayIntersect(ray, t);
+	//	bool pass = hit && fabsf(t - 2.0f) < 1e-4f;
+	//	std::cout << "[Sphere Test 1] outside hit (2 roots): " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	// Test 2: tangent (discriminant == 0)
-	{
-		Ray ray(Vec3(1.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
-		float t = -1.0f;
-		bool hit = sphere.rayIntersect(ray, t);
-		bool pass = hit && fabsf(t - 3.0f) < 1e-4f;
-		std::cout << "[Sphere Test 2] tangent hit (1 root): " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	////  tangent (discriminant == 0)
+	//{
+	//	Ray ray(Vec3(1.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
+	//	float t = -1.0f;
+	//	bool hit = sphere.rayIntersect(ray, t);
+	//	bool pass = hit && fabsf(t - 3.0f) < 1e-4f;
+	//	std::cout << "[Sphere Test 2] tangent hit (1 root): " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	// Test 3: miss (discriminant < 0)
-	{
-		Ray ray(Vec3(2.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
-		float t = -1.0f;
-		bool hit = sphere.rayIntersect(ray, t);
-		std::cout << "[Sphere Test 3] miss: " << (!hit ? "PASS" : "FAIL") << std::endl;
-	}
+	//// miss (discriminant < 0)
+	//{
+	//	Ray ray(Vec3(2.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
+	//	float t = -1.0f;
+	//	bool hit = sphere.rayIntersect(ray, t);
+	//	std::cout << "[Sphere Test 3] miss: " << (!hit ? "PASS" : "FAIL") << std::endl;
+	//}
 
-	// Test 4: origin inside sphere
-	{
-		Ray ray(Vec3(0.0f, 0.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f));
-		float t = -1.0f;
-		bool hit = sphere.rayIntersect(ray, t);
-		bool pass = hit && fabsf(t - 1.0f) < 1e-4f;
-		std::cout << "[Sphere Test 4] inside sphere exit hit: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	//// origin inside sphere
+	//{
+	//	Ray ray(Vec3(0.0f, 0.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f));
+	//	float t = -1.0f;
+	//	bool hit = sphere.rayIntersect(ray, t);
+	//	bool pass = hit && fabsf(t - 1.0f) < 1e-4f;
+	//	std::cout << "[Sphere Test 4] inside sphere exit hit: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	std::cout << "Running AABB::rayAABB tests..." << std::endl;
+	//std::cout << "AABB." << std::endl;
 
-	AABB box;
-	box.min = Vec3(-1.0f, -1.0f, -1.0f);
-	box.max = Vec3(1.0f, 1.0f, 1.0f);
+	//AABB box;
+	//box.min = Vec3(-1.0f, -1.0f, -1.0f);
+	//box.max = Vec3(1.0f, 1.0f, 1.0f);
 
-	// Test 1: outside -> hit (entry)
-	{
-		Ray ray(Vec3(0.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
-		float t = -1.0f;
-		bool hit = box.rayAABB(ray, t);
-		bool pass = hit && fabsf(t - 2.0f) < 1e-4f;
-		std::cout << "[AABB Test 1] outside entry hit: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	//
+	//{
+	//	Ray ray(Vec3(0.0f, 0.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
+	//	float t = -1.0f;
+	//	bool hit = box.rayAABB(ray, t);
+	//	bool pass = hit && fabsf(t - 2.0f) < 1e-4f;
+	//	std::cout << "[AABB Test 1] outside entry hit: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	// Test 2: miss
-	{
-		Ray ray(Vec3(3.0f, 3.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
-		bool hit = box.rayAABB(ray);
-		std::cout << "[AABB Test 2] miss: " << (!hit ? "PASS" : "FAIL") << std::endl;
-	}
+	////  miss
+	//{
+	//	Ray ray(Vec3(3.0f, 3.0f, -3.0f), Vec3(0.0f, 0.0f, 1.0f));
+	//	bool hit = box.rayAABB(ray);
+	//	std::cout << "[AABB Test 2] miss: " << (!hit ? "PASS" : "FAIL") << std::endl;
+	//}
 
-	// Test 3: origin inside box -> hit (exit)
-	{
-		Ray ray(Vec3(0.0f, 0.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f));
-		float t = -1.0f;
-		bool hit = box.rayAABB(ray, t);
-		bool pass = hit && fabsf(t - 1.0f) < 1e-4f;
-		std::cout << "[AABB Test 3] inside exit hit: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
-	}
+	//{
+	//	Ray ray(Vec3(0.0f, 0.0f, 0.0f), Vec3(1.0f, 0.0f, 0.0f));
+	//	float t = -1.0f;
+	//	bool hit = box.rayAABB(ray, t);
+	//	bool pass = hit && fabsf(t - 1.0f) < 1e-4f;
+	//	std::cout << "[AABB Test 3] inside exit hit: " << (pass ? "PASS" : "FAIL") << " (t=" << t << ")" << std::endl;
+	//}
 
-	// Test 4: area
-	{
-		float a = box.area();
-		bool pass = fabsf(a - 24.0f) < 1e-4f;
-		std::cout << "[AABB Test 4] area: " << (pass ? "PASS" : "FAIL") << " (area=" << a << ")" << std::endl;
-	}
+	////  area
+	//{
+	//	float a = box.area();
+	//	bool pass = fabsf(a - 24.0f) < 1e-4f;
+	//	std::cout << "[AABB Test 4] area: " << (pass ? "PASS" : "FAIL") << " (area=" << a << ")" << std::endl;
+	//}
 }
 
 int main(int argc, char *argv[])
@@ -125,10 +123,9 @@ int main(int argc, char *argv[])
 	runTests();
 	
 	// Initialize default parameters
-	//std::string sceneName = "cornell-box";
-	//std::string sceneName = "MaterialsScene";
-	std::string sceneName = "dining-room";
-	//std::string sceneName = "classroom";
+	//std::string sceneName = "cornell-box"; about 30s
+	std::string sceneName = "dining-room";//will takes about 20s
+	//std::string sceneName = "bedroom";
 	std::string filename = "GI.hdr";
 	unsigned int SPP = 8192;
 

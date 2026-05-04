@@ -960,7 +960,7 @@ public:
 		IntersectionData intersection = scene->traverse(ray);
 		ShadingData shadingData = scene->calculateShadingData(intersection, ray);
 
-		// 2) Miss => terminate
+		// 2) Miss,terminate
 		if (shadingData.t >= FLT_MAX)
 		{
 			return;
